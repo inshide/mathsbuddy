@@ -111,48 +111,28 @@ Be GENEROUS when checking:
 - Accept answers with or without units if the number is right
 - Accept equivalent forms (73/100 × 100 = 73, so "73" is correct for a percentage question where score is 73 out of 100)`;
 
-// ─── API ──────────────────────────────────────────────────────────────────────
-
-const API_KEY = import.meta.env.VITE_GROQ_KEY || "";
+// ─── CLAUDE API ──────────────────────────────────────────────────────────────
 
 async function callClaude(system, userContent, maxTokens = 1500) {
-  // Convert Anthropic-style userContent to OpenAI-compatible messages
-  // Groq supports vision via llama-4-scout-17b-16e-instruct
-  const userParts = [];
   const contents = typeof userContent === "string"
     ? [{ type: "text", text: userContent }]
     : userContent;
 
-  for (const item of contents) {
-    if (item.type === "text") {
-      userParts.push({ type: "text", text: item.text });
-    } else if (item.type === "image" && item.source?.type === "base64") {
-      userParts.push({
-        type: "image_url",
-        image_url: { url: `data:${item.source.media_type};base64,${item.source.data}` }
-      });
-    }
-  }
-
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${API_KEY}`,
     },
     body: JSON.stringify({
-      model: "meta-llama/llama-4-scout-17b-16e-instruct",
+      model: "claude-sonnet-4-20250514",
       max_tokens: maxTokens,
-      temperature: 0.3,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userParts.length === 1 && userParts[0].type === "text" ? userParts[0].text : userParts }
-      ],
+      system: system,
+      messages: [{ role: "user", content: contents }],
     }),
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.choices?.[0]?.message?.content || "";
+  return data.content?.[0]?.text || "";
 }
 
 function parseJSON(raw) {
@@ -201,7 +181,6 @@ function HighlightedText({ text, givenPhrases = [], findPhrases = [] }) {
 // ─── STEP CARD ────────────────────────────────────────────────────────────────
 
 function StepCard({ step, onComplete, completed = false }) {
-  // Each StepCard has its own completely isolated inputs keyed by this step's blank IDs
   const initInputs = () => {
     const obj = {};
     for (const b of (step.blanks || [])) obj[b.id] = "";
@@ -209,14 +188,13 @@ function StepCard({ step, onComplete, completed = false }) {
   };
 
   const [inputs, setInputs] = useState(initInputs);
-  const [status, setStatus] = useState(completed ? "done" : "idle"); // idle | checking | wrong | done
+  const [status, setStatus] = useState(completed ? "done" : "idle");
   const [feedback, setFeedback] = useState("");
   const [showAnswer, setShowAnswer] = useState(completed);
 
   const blankMap = {};
   for (const b of (step.blanks || [])) blankMap[b.id] = b;
 
-  // Parse template into segments
   const templateParts = [];
   {
     const regex = /\[([^\]]+)\]/g;
@@ -271,7 +249,6 @@ function StepCard({ step, onComplete, completed = false }) {
   function revealAnswer() {
     setShowAnswer(true);
     setStatus("done");
-    // Advance to next step after a visible delay (so student sees the revealed answer first)
     setTimeout(() => onComplete(), 1200);
   }
 
@@ -282,7 +259,6 @@ function StepCard({ step, onComplete, completed = false }) {
       borderRadius: 14, padding: "14px 16px",
       transition: "border-color 0.25s, background 0.25s"
     }}>
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
         <div style={{
           width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
@@ -295,10 +271,8 @@ function StepCard({ step, onComplete, completed = false }) {
         </div>
       </div>
 
-      {/* Explanation */}
       <p style={{ fontSize: "0.87rem", color: "#5a5a6e", lineHeight: 1.6, margin: "0 0 10px" }}>{step.explanation}</p>
 
-      {/* Template with blanks */}
       <div style={{
         background: "#fff", borderRadius: 10, padding: "12px 16px",
         fontFamily: "'Baloo 2',cursive", fontSize: "1.05rem", fontWeight: 700,
@@ -314,7 +288,7 @@ function StepCard({ step, onComplete, completed = false }) {
           const displayVal = isDone && showAnswer ? b.answer : inputs[p.id] || "";
           return (
             <input
-              key={`${step.stepNum}-${p.id}`}   // stable unique key per step+blank
+              key={`${step.stepNum}-${p.id}`}
               value={displayVal}
               onChange={e => setInput(p.id, e.target.value)}
               onKeyDown={e => e.key === "Enter" && checkStep()}
@@ -338,14 +312,12 @@ function StepCard({ step, onComplete, completed = false }) {
         })}
       </div>
 
-      {/* Success */}
       {status === "done" && (
         <div style={{ fontSize: "0.88rem", fontWeight: 700, color: "#1a7a4e" }}>
           ✅ {step.successMsg}
         </div>
       )}
 
-      {/* Wrong feedback + Try Again / Show Answer */}
       {status === "wrong" && (
         <div style={{ marginTop: 4 }}>
           <div style={{ fontSize: "0.87rem", color: "#c0392b", fontWeight: 600, marginBottom: 8 }}>
@@ -366,7 +338,6 @@ function StepCard({ step, onComplete, completed = false }) {
         </div>
       )}
 
-      {/* Check button */}
       {(status === "idle" || status === "checking") && (step.blanks || []).length > 0 && (
         <button
           onClick={checkStep}
@@ -441,7 +412,7 @@ export default function MathsBuddy() {
   const [workingName, setWorkingName] = useState("");
   const [workingType, setWorkingType] = useState("image/png");
   const [hintSteps, setHintSteps] = useState([]);
-  const [visibleIdx, setVisibleIdx] = useState(-1); // -1 = no steps shown yet
+  const [visibleIdx, setVisibleIdx] = useState(-1);
   const [submittedAnswer, setSubmittedAnswer] = useState(null);
   const fileRef = useRef();
   const workingRef = useRef();
@@ -458,7 +429,7 @@ export default function MathsBuddy() {
 
   function onStepComplete(idx) {
     setTimeout(() => {
-      setVisibleIdx(v => Math.max(v, idx + 1)); // idx+1 may exceed hintSteps.length, which triggers answer box
+      setVisibleIdx(v => Math.max(v, idx + 1));
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 150);
     }, 400);
   }
@@ -488,7 +459,7 @@ export default function MathsBuddy() {
           <button onClick={startHints} style={btn("purple", true)}>🆘 I need a hint</button>
         </div>
       );
-    } catch (e) { addMsg("assistant", <p>⚠️ API 오류: {e.message}</p>); setPhase("upload"); }
+    } catch (e) { addMsg("assistant", <p>⚠️ Error: {e.message}</p>); setPhase("upload"); }
     setLoading(false);
   }
 
@@ -559,7 +530,7 @@ export default function MathsBuddy() {
           </div>
         );
       }
-    } catch (e) { addMsg("assistant", <p>⚠️ 오류: {e.message}</p>); }
+    } catch (e) { addMsg("assistant", <p>⚠️ Error: {e.message}</p>); }
     setLoading(false);
   }
 
@@ -579,7 +550,6 @@ export default function MathsBuddy() {
     setSubmittedAnswer(h.submittedAnswer || null);
     setPhase("done");
     setView("solve");
-    // Rebuild the analysis message + answer user/bot pair
     const analysisMsg = {
       role: "assistant", content: (
         <div>
@@ -635,11 +605,6 @@ export default function MathsBuddy() {
 
   return (
     <div style={{ fontFamily: "'Nunito',sans-serif", background: "#fef9f0", minHeight: "100vh", color: "#2d2d2d" }}>
-      {!API_KEY && (
-        <div style={{ background: "#fdeaeb", borderBottom: "2px solid #e84855", padding: "10px 22px", fontSize: "0.82rem", fontWeight: 700, color: "#c0392b", textAlign: "center" }}>
-          ⚠️ API 키가 없어요! .env 파일에 VITE_GROQ_KEY를 추가해주세요.
-        </div>
-      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Nunito:wght@400;600;700;800&display=swap');
         @keyframes dotBounce { 0%,80%,100%{transform:scale(0.6);opacity:0.5} 40%{transform:scale(1);opacity:1} }
@@ -651,7 +616,6 @@ export default function MathsBuddy() {
         mark { background:none }
       `}</style>
 
-      {/* HEADER */}
       <div style={{ background: "#fff", borderBottom: "3px solid #ece8e0", padding: "12px 22px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 10px rgba(0,0,0,0.05)" }}>
         <div style={{ fontFamily: "'Baloo 2',cursive", fontSize: "1.4rem", fontWeight: 800, color: "#ff6b35", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ background: "#ff6b35", color: "#fff", width: 30, height: 30, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.9rem" }}>✏️</span>
@@ -672,7 +636,6 @@ export default function MathsBuddy() {
 
       <div style={{ padding: "24px 40px 60px" }}>
 
-        {/* HISTORY */}
         {view === "history" && (
           <div>
             <div style={{ fontFamily: "'Baloo 2',cursive", fontSize: "1.3rem", fontWeight: 800, marginBottom: 16, color: "#7c5cbf" }}>📚 Your Archive</div>
@@ -704,9 +667,7 @@ export default function MathsBuddy() {
           </div>
         )}
 
-        {/* SOLVE */}
         {view === "solve" && (<>
-
           {phase === "upload" && (<>
             <div style={{ background: "linear-gradient(135deg,#ff6b35,#ff9a5c)", borderRadius: 22, padding: "22px 28px", color: "#fff", marginBottom: 20, position: "relative", overflow: "hidden", boxShadow: "0 8px 28px rgba(255,107,53,0.28)" }}>
               <div style={{ position: "absolute", right: 20, top: "50%", transform: "translateY(-50%)", fontSize: "4rem", opacity: 0.18 }}>🧮</div>
@@ -734,13 +695,11 @@ export default function MathsBuddy() {
             </div>
           </>)}
 
-          {/* CHAT */}
           <div style={{ display: "flex", flexDirection: "column", gap: 13, marginBottom: 14 }}>
             {messages.map((m, i) => <Bubble key={i} role={m.role}>{m.content}</Bubble>)}
             {loading && <Dots />}
           </div>
 
-          {/* HINT STEPS */}
           {hintSteps.length > 0 && visibleIdx >= 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 14 }}>
               {hintSteps.slice(0, visibleIdx + 1).map((step, idx) => (
@@ -753,7 +712,6 @@ export default function MathsBuddy() {
 
           <div ref={bottomRef} />
 
-          {/* ANSWER BOX */}
           {showAnswerBox && (
             <div style={{ background: "#fff", borderRadius: 16, padding: "16px 18px", border: `2px solid ${phase === "done" ? (submittedAnswer?.correct ? "#34c77b" : "#e84855") : "#0cb8a6"}`, marginBottom: 10, boxShadow: "0 4px 16px rgba(12,184,166,0.1)", animation: "slideIn 0.35s ease" }}>
               <div style={{ fontWeight: 800, fontSize: "0.78rem", color: "#0a7a6e", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 9 }}>✏️ Answer Sheet</div>
@@ -786,7 +744,7 @@ export default function MathsBuddy() {
               )}
             </div>
           )}
-          {/* BOTTOM BUTTONS */}
+
           {phase === "done" && (
             <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
               <button onClick={reset} style={{
@@ -796,7 +754,7 @@ export default function MathsBuddy() {
               }}>✏️ New Problem</button>
               <button onClick={() => {
                 setPhase("guided"); setHintSteps([]); setVisibleIdx(-1); setSubmittedAnswer(null); setAnswerText("");
-                setMessages(prev => prev.slice(0, 1)); // keep analysis msg, drop answer msgs
+                setMessages(prev => prev.slice(0, 1));
               }} style={{
                 flex: 1, background: "#fff", border: "2px dashed #7c5cbf",
                 color: "#7c5cbf", padding: 13, borderRadius: 14,
